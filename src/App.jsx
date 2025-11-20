@@ -4,6 +4,12 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 
 import { History, Settings, RotateCcw, X, Undo2, Sparkles, Wand2, Loader2, Shield } from 'lucide-react';
 
+import { teamNamesService } from './lib/supabaseService';
+
+import { gameSessionService } from './lib/supabaseService';
+
+import { migrateAllData } from './lib/migrateToDatabase';
+
 
 
 // --- Colors & Styles ---
@@ -153,40 +159,80 @@ const toBanglaNumber = (value) => value.toString().replace(/[0-9]/g, (digit) => 
 
 const TeamNamesProvider = ({ children }) => {
   const [customTeamNames, setCustomTeamNames] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Load team names (database first, localStorage fallback)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('customTeamNames');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const sanitized = parsed
-            .map(name => (typeof name === 'string' ? name.trim() : ''))
-            .filter(Boolean);
-          if (sanitized.length > 0) {
-            setCustomTeamNames(sanitized);
+    const loadTeamNames = async () => {
+      setIsLoading(true);
+      try {
+        // Database-first approach - getCustomTeamNames handles fallback
+        const names = await teamNamesService.getCustomTeamNames();
+        setCustomTeamNames(names);
+        
+        // If we got names from localStorage and Supabase is now configured, migrate
+        if (names.length > 0) {
+          try {
+            const saved = localStorage.getItem('customTeamNames');
+            if (saved) {
+              // Check if Supabase is configured but we're using localStorage
+              const isSupabaseConfigured = () => {
+                const url = import.meta.env.VITE_PUBLIC_SUPABASE_URL || import.meta.env.VITE_SUPABASE_URL || '';
+                const key = import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+                return !!(url && key && url !== 'https://placeholder.supabase.co');
+              };
+              
+              if (isSupabaseConfigured()) {
+                await teamNamesService.migrateLocalStorageToDatabase();
+              }
+            }
+          } catch (migrateError) {
+            console.warn('Failed to migrate team names to database:', migrateError);
           }
         }
+      } catch (error) {
+        console.error('Failed to load team names', error);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (error) {
-      console.error('Failed to load team names from storage', error);
-    }
+    };
+
+    loadTeamNames();
   }, []);
 
+  // Save team names (database first, localStorage as backup)
   useEffect(() => {
-    try {
-      localStorage.setItem('customTeamNames', JSON.stringify(customTeamNames));
-    } catch (error) {
-      console.error('Failed to save team names', error);
+    if (!isLoading && customTeamNames.length >= 0) {
+      // Database-first approach - syncTeamNames handles both database and localStorage
+      teamNamesService.syncTeamNames(customTeamNames).catch(error => {
+        console.warn('Failed to sync team names:', error);
+      });
     }
-  }, [customTeamNames]);
+  }, [customTeamNames, isLoading]);
 
-  const addTeamName = (name) => {
-    setCustomTeamNames(prev => [...prev, name]);
+  const addTeamName = async (name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    
+    setCustomTeamNames(prev => [...prev, trimmed]);
+    
+    // Also add to Supabase
+    try {
+      await teamNamesService.addTeamName(trimmed);
+    } catch (error) {
+      console.warn('Failed to add team name to Supabase:', error);
+    }
   };
 
-  const removeTeamName = (targetName) => {
+  const removeTeamName = async (targetName) => {
     setCustomTeamNames(prev => prev.filter(name => name !== targetName));
+    
+    // Also remove from Supabase
+    try {
+      await teamNamesService.removeTeamName(targetName);
+    } catch (error) {
+      console.warn('Failed to remove team name from Supabase:', error);
+    }
   };
 
   const allTeamNames = useMemo(() => [...DEFAULT_TEAM_NAMES, ...customTeamNames], [customTeamNames]);
@@ -557,6 +603,10 @@ function ScoreTracker() {
 
   const [history, setHistory] = useState([]); // Array of past score states
 
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+
+  const [isSaving, setIsSaving] = useState(false);
+
   
 
   // Modal States
@@ -575,6 +625,107 @@ function ScoreTracker() {
   const [isGeneratingCommentary, setIsGeneratingCommentary] = useState(false);
 
   // --- Effects ---
+
+  
+
+  // Load game session from database (with localStorage fallback)
+  useEffect(() => {
+    const loadGameSession = async () => {
+      try {
+        // Database-first approach - getLatestSession handles fallback
+        const session = await gameSessionService.getLatestSession();
+        if (session && session.players && session.history) {
+          setPlayers(session.players);
+          setHistory(session.history.map(h => ({
+            ...h,
+            timestamp: new Date(h.timestamp)
+          })));
+          setPlayerCount(session.player_count || 2);
+          setCurrentSessionId(session.id);
+          
+          // If we loaded from localStorage and Supabase is now configured, migrate
+          if (session.id === 'local') {
+            try {
+              const migratedId = await gameSessionService.migrateLocalStorageToDatabase();
+              if (migratedId) {
+                setCurrentSessionId(migratedId);
+                console.log('✅ Game session migrated to database');
+              }
+            } catch (migrateError) {
+              console.warn('Failed to migrate localStorage to database:', migrateError);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load game session:', error);
+      }
+    };
+
+    loadGameSession();
+    
+    // Run full migration check on mount (only once, silently in background)
+    const runMigration = async () => {
+      try {
+        const result = await migrateAllData();
+        if (result.success) {
+          console.log('✅ All data migrated to database');
+        }
+      } catch (error) {
+        // Silent fail - migration is optional
+        console.debug('Migration check:', error);
+      }
+    };
+    
+    // Run migration after a short delay to not block initial load
+    setTimeout(runMigration, 2000);
+  }, []);
+
+  
+
+  // Auto-save game session (database first, localStorage as backup)
+  useEffect(() => {
+    const saveGameSession = async () => {
+      if (players.length === 0) return; // Don't save if not initialized
+
+      setIsSaving(true);
+      const sessionData = {
+        playerCount,
+        players: players.map(p => ({
+          id: p.id,
+          name: p.name,
+          score: p.score,
+          draftDelta: 0 // Don't save draft deltas
+        })),
+        history: history.map(h => ({
+          timestamp: h.timestamp.toISOString(),
+          scores: h.scores
+        }))
+      };
+
+      try {
+        // Database-first approach - service handles database and localStorage
+        if (currentSessionId && currentSessionId !== 'local') {
+          const updated = await gameSessionService.updateSession(currentSessionId, sessionData);
+          if (updated && updated.id) {
+            setCurrentSessionId(updated.id);
+          }
+        } else {
+          const newSession = await gameSessionService.saveSession(sessionData);
+          if (newSession && newSession.id) {
+            setCurrentSessionId(newSession.id);
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to save game session:', error);
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    // Debounce saves to avoid too many API calls
+    const timeoutId = setTimeout(saveGameSession, 1000);
+    return () => clearTimeout(timeoutId);
+  }, [players, history, playerCount, currentSessionId]);
 
   
 
@@ -700,7 +851,7 @@ function ScoreTracker() {
 
 
 
-  const resetGame = () => {
+  const resetGame = async () => {
 
     if(confirm("আপনি কি নিশ্চিত যে সব স্কোর শূন্য করতে চান?")) {
 
@@ -708,7 +859,21 @@ function ScoreTracker() {
 
         setHistory([]);
 
+        setCurrentSessionId(null);
+
         setShowSettings(false);
+
+        
+
+        // Clear from Supabase and localStorage
+        try {
+          if (currentSessionId) {
+            await gameSessionService.deleteSession(currentSessionId);
+          }
+          localStorage.removeItem('gameSession');
+        } catch (error) {
+          console.warn('Failed to delete session from Supabase:', error);
+        }
 
     }
 
@@ -817,6 +982,14 @@ function ScoreTracker() {
         <div className="flex items-center gap-2">
 
              <div className="font-bold text-lg tracking-tight text-gray-800 hidden sm:block">স্কোর ট্র্যাকার</div>
+
+             {/* Save Indicator */}
+             {isSaving && (
+               <div className="flex items-center gap-1 text-xs text-gray-400">
+                 <Loader2 size={12} className="animate-spin" />
+                 <span className="hidden sm:inline">সংরক্ষণ হচ্ছে...</span>
+               </div>
+             )}
 
              {/* AI Commentary Button */}
 

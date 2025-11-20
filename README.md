@@ -23,6 +23,8 @@ A beautiful, responsive score tracking app built with React and Tailwind CSS. Fe
 - **Interactive Sliders**: Intuitive range slider (-13 to +13) for precise score adjustments
 - **Score History**: Complete game history with timestamps and change tracking
 - **Undo Functionality**: Revert to previous game states with one click
+- **Cloud Sync**: Game sessions and team names sync across devices via Supabase
+- **Auto-save**: Automatic saving of game state to cloud and local storage
 
 ### 🤖 AI-Powered Features
 - **AI Name Generation**: Generate creative, fun team names using OpenAI
@@ -46,6 +48,7 @@ A beautiful, responsive score tracking app built with React and Tailwind CSS. Fe
 
 - **Node.js** 16+ and npm (or yarn/pnpm)
 - **OpenAI API Key** ([Get one here](https://platform.openai.com/api-keys))
+- **Supabase Account** ([Sign up here](https://supabase.com)) - Optional but recommended for cloud sync
 
 ### Installation
 
@@ -65,9 +68,13 @@ A beautiful, responsive score tracking app built with React and Tailwind CSS. Fe
    Create a `.env` file in the root directory:
    ```env
    VITE_OPENAI_API_KEY=your_openai_api_key_here
+   VITE_SUPABASE_URL=your_supabase_project_url
+   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
    ```
    
    > ⚠️ **Security Note**: Never commit your `.env` file! It's already in `.gitignore`.
+   
+   > 📘 **Supabase Setup**: See [SUPABASE_SETUP.md](./SUPABASE_SETUP.md) for detailed instructions on setting up Supabase.
 
 4. **Start development server**
    ```bash
@@ -94,6 +101,7 @@ A beautiful, responsive score tracking app built with React and Tailwind CSS. Fe
 
 ### AI & APIs
 - **OpenAI API** - GPT-3.5-turbo for AI features
+- **Supabase** - Backend as a Service for data persistence and cloud sync
 - **Fetch API** - HTTP requests
 
 ### Development Tools
@@ -111,10 +119,13 @@ A beautiful, responsive score tracking app built with React and Tailwind CSS. Fe
 This project is configured for easy deployment on [Vercel](https://vercel.com):
 
 1. **Connect your GitHub repository** to Vercel
-2. **Add environment variable**:
-   - Key: `VITE_OPENAI_API_KEY`
-   - Value: Your OpenAI API key
+2. **Add environment variables**:
+   - `VITE_OPENAI_API_KEY`: Your OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
+   - `VITE_PUBLIC_SUPABASE_URL`: Your Supabase project URL
+   - `VITE_PUBLIC_SUPABASE_ANON_KEY`: Your Supabase anon/public key
 3. **Deploy** - Vercel will automatically build and deploy
+
+📘 **Detailed Guide**: See [VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md) for complete setup instructions including OpenAI API key setup.
 
 Or use Vercel CLI:
 ```bash
